@@ -51,6 +51,15 @@ export async function enrichActor(admin, resourceGid) {
     });
     const json = await response.json();
     const event = json?.data?.node?.events?.edges?.[0]?.node;
+    // TEMP DEBUG — remove once attribution is confirmed working.
+    console.log(
+      "[enrichActor]",
+      resourceGid,
+      "event:",
+      JSON.stringify(event),
+      "errors:",
+      JSON.stringify(json?.errors),
+    );
     if (!event) return { actorName: null };
 
     if (event.attributeToApp && event.appTitle) {

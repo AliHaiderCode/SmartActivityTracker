@@ -15,6 +15,16 @@ export const action = async ({ request }) => {
   const { resource, action: eventAction } = parseTopic(topic);
   const { title, summary, resourceId, actor } = summarize(topic, payload);
 
+  // TEMP DEBUG — remove once attribution is confirmed working.
+  console.log(
+    "[webhook]",
+    topic,
+    "hasAdmin:",
+    Boolean(admin),
+    "gid:",
+    payload?.admin_graphql_api_id,
+  );
+
   // Best-effort "who did it" via the Admin events API. Only enrich when the
   // payload didn't already give us a real actor (e.g. customer email) and we
   // have an admin client + a resource GID. Deletes have no node to query.
