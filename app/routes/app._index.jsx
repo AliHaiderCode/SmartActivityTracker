@@ -127,11 +127,18 @@ export const loader = async ({ request }) => {
     ? resourceLabel(resourceGroups[0].resource)
     : "—";
 
+  // Distinct "sources" of activity — a staff email when we have one, otherwise
+  // the derived attribution (e.g. "Admin user", an app name, "System").
   const distinctActors = await db.activityLog.findMany({
-    where: { shop, actorEmail: { not: null } },
-    select: { actorEmail: true },
-    distinct: ["actorEmail"],
+    where: {
+      shop,
+      OR: [{ actorEmail: { not: null } }, { actorName: { not: null } }],
+    },
+    select: { actorEmail: true, actorName: true },
   });
+  const distinctSources = new Set(
+    distinctActors.map((a) => a.actorEmail || a.actorName),
+  );
 
   return {
     logs: logs.map((l) => ({
@@ -154,7 +161,7 @@ export const loader = async ({ request }) => {
       totalAll,
       todayCount,
       topResource,
-      activeUsers: distinctActors.length,
+      activeUsers: distinctSources.size,
     },
   };
 };
@@ -227,7 +234,7 @@ export default function Dashboard() {
           <StatTile label="Total events" value={stats.totalAll} />
           <StatTile label="Events today" value={stats.todayCount} />
           <StatTile label="Top resource" value={stats.topResource} />
-          <StatTile label="Active users" value={stats.activeUsers} />
+          <StatTile label="Sources" value={stats.activeUsers} />
         </s-grid>
       </s-section>
 
@@ -341,7 +348,7 @@ export default function Dashboard() {
                 <s-table-header>Resource</s-table-header>
                 <s-table-header>Action</s-table-header>
                 <s-table-header listSlot="primary">Summary</s-table-header>
-                <s-table-header>User</s-table-header>
+                <s-table-header>User / source</s-table-header>
                 <s-table-header></s-table-header>
               </s-table-header-row>
               <s-table-body>

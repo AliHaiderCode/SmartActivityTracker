@@ -10,6 +10,65 @@
 
 import { parseTopic, resourceLabel, actionLabel } from "./activity";
 
+const LATEST_EVENT_QUERY = `#graphql
+  query ActivityLatestEvent($id: ID!) {
+    node(id: $id) {
+      ... on HasEvents {
+        events(first: 1, reverse: true, sortKey: CREATED_AT) {
+          edges {
+            node {
+              action
+              message
+              createdAt
+              attributeToUser
+              attributeToApp
+              appTitle
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+/**
+ * Enrich a log with "who did it" using the Admin `events` API.
+ *
+ * Shopify does NOT expose the acting staff member's name/email for regular
+ * changes (only Plus audit logs do). What we CAN reliably get per resource is:
+ *  - attributeToUser  → an admin/staff user did it (name unavailable)
+ *  - attributeToApp   → an app did it, plus the app's title
+ * We turn that into a human attribution label like "Admin user", the app name,
+ * or "System". Returns { actorName } (never throws — enrichment is best-effort).
+ */
+export async function enrichActor(admin, resourceGid) {
+  if (!admin || !resourceGid || !String(resourceGid).startsWith("gid://")) {
+    return { actorName: null };
+  }
+
+  try {
+    const response = await admin.graphql(LATEST_EVENT_QUERY, {
+      variables: { id: resourceGid },
+    });
+    const json = await response.json();
+    const event = json?.data?.node?.events?.edges?.[0]?.node;
+    if (!event) return { actorName: null };
+
+    if (event.attributeToApp && event.appTitle) {
+      return { actorName: `${event.appTitle} (app)` };
+    }
+    if (event.attributeToApp) {
+      return { actorName: "App" };
+    }
+    if (event.attributeToUser) {
+      return { actorName: "Admin user" };
+    }
+    return { actorName: "System" };
+  } catch (error) {
+    console.error("enrichActor failed", error);
+    return { actorName: null };
+  }
+}
+
 function money(amount, currency) {
   if (amount == null) return null;
   const value = Number(amount);
