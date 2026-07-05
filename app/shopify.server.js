@@ -32,3 +32,10 @@ export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export const sessionStorage = shopify.sessionStorage;
+
+// Start the activity-log retention job once, at server startup.
+if (process.env.NODE_ENV === "production") {
+  import("./utils/retention.server")
+    .then(({ startRetentionSchedule }) => startRetentionSchedule())
+    .catch((error) => console.error("Failed to start retention schedule", error));
+}
