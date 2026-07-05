@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Postgres is used in production (Railway). Set DATABASE_URL in your environment.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// A single captured store activity (one webhook event).
+model ActivityLog {
+  id         String   @id @default(cuid())
+  shop       String
+  topic      String // e.g. "products/update"
+  resource   String // "product", "order", "customer" ...
+  action     String // "create" | "update" | "delete" | ...
+  resourceId String? // Shopify GID / numeric id of the affected object
+  title      String? // human summary e.g. "Blue Snowboard"
+  actorName  String? // staff member name (when available)
+  actorEmail String? // staff member email (when available)
+  actorId    String?
+  summary    String? // short human-readable description
+  payload    Json // full webhook payload for detail view
+  webhookId  String?  @unique // X-Shopify-Webhook-Id → idempotency
+  occurredAt DateTime // event time from payload/header
+  createdAt  DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, resource])
+  @@index([shop, topic])
+  @@index([shop, actorEmail])
+  @@index([shop, resourceId])
+}
