@@ -8,7 +8,12 @@
  * back to the shop/system otherwise. See README for the full explanation.
  */
 
-import { parseTopic, resourceLabel, actionLabel } from "./activity";
+import {
+  parseTopic,
+  resourceLabel,
+  actionLabel,
+  staffNameFromMessage,
+} from "./activity";
 
 // Generic: latest event on any HasEvents resource (products, collections,
 // discounts, customers, etc.). The event `message` names the staff on Plus.
@@ -52,10 +57,18 @@ const ORDER_STAFF_QUERY = `#graphql
     }
   }`;
 
-// Classify an event into { actorName, sourceType } from its attribute flags.
+// Classify an event into { actorName, sourceType }.
 //  sourceType: "user" (a staff member), "app" (an app/automation), "system".
 function classifyEvent(event) {
   if (!event) return { actorName: null, sourceType: "system" };
+
+  // If the message names a person, that person did it — strongest signal,
+  // even when Shopify attributes the action to the "Shopify Web" app.
+  const named = staffNameFromMessage(event.message);
+  if (named) {
+    return { actorName: named, sourceType: "user" };
+  }
+
   if (event.attributeToApp) {
     return {
       actorName: event.appTitle ? `${event.appTitle} (app)` : "App",
@@ -96,17 +109,7 @@ export async function enrichActor(admin, resourceGid, resource) {
       const res = await admin.graphql(ORDER_STAFF_QUERY, {
         variables: { id: resourceGid },
       });
-      const orderJson = await res.json();
-      // TEMP DEBUG — inspect staffMember resolution for orders.
-      console.log(
-        "[enrichActor:order]",
-        resourceGid,
-        "data:",
-        JSON.stringify(orderJson?.data?.order),
-        "errors:",
-        JSON.stringify(orderJson?.errors),
-      );
-      const order = orderJson?.data?.order;
+      const order = (await res.json())?.data?.order;
       const staff = order?.staffMember;
       const event = order?.events?.edges?.[0]?.node;
       const eventMessage = event?.message || null;

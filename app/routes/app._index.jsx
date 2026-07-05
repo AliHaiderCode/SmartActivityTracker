@@ -3,7 +3,13 @@ import { Form, useLoaderData, useNavigation, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { actionLabel, resourceLabel, stripHtml } from "../utils/activity";
+import {
+  actionLabel,
+  resourceLabel,
+  stripHtml,
+  staffNameFromMessage,
+  parseTopic,
+} from "../utils/activity";
 
 const PAGE_SIZE = 25;
 
@@ -50,9 +56,57 @@ function toneForAction(action) {
   return "neutral";
 }
 
+// Backfill older rows logged before parsing/attribution fixes existed:
+//  - re-parse the stored topic into resource/action (early rows stored the raw
+//    enum topic as the resource and "event" as the action)
+//  - if the summary names a staff member, promote the row to a "user" source
+// Runs cheaply on load and is idempotent.
+async function backfillLogs(shop) {
+  const candidates = await db.activityLog.findMany({
+    where: {
+      shop,
+      OR: [
+        { action: "event" },
+        { sourceType: { not: "user" }, summary: { not: null } },
+      ],
+    },
+    select: { id: true, topic: true, summary: true, action: true, sourceType: true },
+    take: 1000,
+  });
+
+  const updates = [];
+  for (const row of candidates) {
+    const data = {};
+
+    if (row.action === "event") {
+      const { resource, action } = parseTopic(row.topic);
+      if (action !== "event") {
+        data.resource = resource;
+        data.action = action;
+      }
+    }
+
+    if (row.sourceType !== "user") {
+      const name = staffNameFromMessage(row.summary);
+      if (name) {
+        data.actorName = name;
+        data.sourceType = "user";
+      }
+    }
+
+    if (Object.keys(data).length) {
+      updates.push(db.activityLog.update({ where: { id: row.id }, data }));
+    }
+  }
+  if (updates.length) await db.$transaction(updates);
+}
+
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // Backfill older rows (re-parse topic, extract staff name). Idempotent.
+  await backfillLogs(shop);
 
   const url = new URL(request.url);
   const params = url.searchParams;
@@ -188,21 +242,76 @@ function formatDate(iso) {
 }
 
 // Clean an event summary for the table: strip HTML and cap length.
-function cleanSummary(text, max = 90) {
+function cleanSummary(text, max = 55) {
   const clean = stripHtml(text) || "";
   return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
 }
 
-function StatTile({ label, value }) {
+// Native date input styled to match Polaris fields, full-width (fills its
+// grid column, unlike the compact s-date-field). Submits the form on change.
+function DateField({ label, name, value, onChange, min, max }) {
+  return (
+    <label style={{ display: "block", width: "100%" }}>
+      <span
+        style={{
+          display: "block",
+          fontSize: "13px",
+          marginBottom: "4px",
+          color: "#616161",
+        }}
+      >
+        {label}
+      </span>
+      <input
+        type="date"
+        name={name}
+        key={value || "empty"}
+        defaultValue={value}
+        min={min}
+        max={max}
+        onChange={onChange}
+        onClick={(e) => e.currentTarget.showPicker?.()}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "6px 10px",
+          border: "1px solid #8a8a8a",
+          borderRadius: "8px",
+          fontSize: "14px",
+          lineHeight: "20px",
+          height: "36px",
+          background: "#fff",
+          color: "#303030",
+          cursor: "pointer",
+        }}
+      />
+    </label>
+  );
+}
+
+function StatTile({ label, value, icon, tone = "neutral" }) {
   return (
     <s-box
-      padding="base"
+      padding="large"
       borderWidth="base"
-      borderRadius="base"
-      background="subdued"
+      borderRadius="large"
+      background="base"
     >
-      <s-stack direction="block" gap="small-200">
-        <s-text color="subdued">{label}</s-text>
+      <s-stack direction="block" gap="base">
+        <s-stack direction="inline" gap="small-200" alignItems="center">
+          {icon ? (
+            <s-box
+              padding="small-200"
+              borderRadius="base"
+              background="subdued"
+            >
+              <s-icon type={icon} tone={tone} size="base"></s-icon>
+            </s-box>
+          ) : null}
+          <s-text color="subdued" type="strong">
+            {label}
+          </s-text>
+        </s-stack>
         <s-heading>{value}</s-heading>
       </s-stack>
     </s-box>
@@ -215,6 +324,9 @@ export default function Dashboard() {
   const navigation = useNavigation();
   const submit = useSubmit();
   const isLoading = navigation.state === "loading";
+
+  // Today (YYYY-MM-DD) — used to block future dates in the date filters.
+  const today = new Date().toISOString().slice(0, 10);
 
   // Source tabs: All / People / Apps & automation.
   const SOURCE_TABS = [
@@ -258,27 +370,67 @@ export default function Dashboard() {
     submit(buildParams({ source: nextSource, page: 1 }), { method: "get" });
 
   return (
-    <s-page heading="Activity dashboard">
+    <s-page heading="Activity Dashboard">
       {/* Summary stats */}
       <s-section heading="Overview">
         <s-grid
           gridTemplateColumns="1fr 1fr 1fr 1fr"
           gap="base"
         >
-          <StatTile label="Total events" value={stats.totalAll} />
-          <StatTile label="Events today" value={stats.todayCount} />
-          <StatTile label="Top resource" value={stats.topResource} />
-          <StatTile label="Sources" value={stats.activeUsers} />
+          <StatTile
+            label="Total events"
+            value={stats.totalAll}
+            icon="data-presentation"
+            tone="info"
+          />
+          <StatTile
+            label="Events today"
+            value={stats.todayCount}
+            icon="calendar"
+            tone="success"
+          />
+          <StatTile
+            label="Top resource"
+            value={stats.topResource}
+            icon="inventory"
+            tone="warning"
+          />
+          <StatTile
+            label="Sources"
+            value={stats.activeUsers}
+            icon="team"
+            tone="caution"
+          />
         </s-grid>
       </s-section>
 
-      {/* Filters */}
-      <s-section heading="Search & filter">
-        <Form method="get">
-          {/* reset page whenever filters change; keep the active source tab */}
-          <input type="hidden" name="page" value="1" />
-          <input type="hidden" name="source" value={filters.source} />
-          <s-stack direction="block" gap="base">
+      {/* Filters — collapsed by default, opens when clicked or when a filter is active */}
+      <s-section>
+        <details open={Boolean(hasFilters)}>
+          <summary
+            style={{
+              cursor: "pointer",
+              listStyle: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontWeight: 600,
+              fontSize: "14px",
+              userSelect: "none",
+            }}
+          >
+            <s-icon type="filter" size="base"></s-icon>
+            Search &amp; filter
+            {hasFilters ? (
+              <s-badge tone="info">Active</s-badge>
+            ) : null}
+          </summary>
+          <div style={{ marginTop: "16px" }}>
+            <Form method="get">
+              {/* reset page whenever filters change; keep the active source tab */}
+              <input type="hidden" name="page" value="1" />
+              <input type="hidden" name="source" value={filters.source} />
+              <s-stack direction="block" gap="base">
             <s-search-field
               label="Search"
               name="q"
@@ -323,37 +475,42 @@ export default function Dashboard() {
                 value={filters.actor}
                 placeholder="e.g. jane@store.com"
               ></s-text-field>
-              <s-date-field
+              <DateField
                 label="From"
                 name="from"
                 value={filters.from}
+                max={filters.to || today}
                 onChange={autoSubmit}
-              ></s-date-field>
-              <s-date-field
+              />
+              <DateField
                 label="To"
                 name="to"
                 value={filters.to}
+                min={filters.from || undefined}
+                max={today}
                 onChange={autoSubmit}
-              ></s-date-field>
+              />
             </s-grid>
 
-            <s-stack direction="inline" gap="base">
-              <s-button variant="primary" type="submit">
-                Apply filters
-              </s-button>
-              {hasFilters ? (
-                <s-button variant="tertiary" href="/app">
-                  Clear
-                </s-button>
-              ) : null}
-            </s-stack>
-          </s-stack>
-        </Form>
+                <s-stack direction="inline" gap="base">
+                  <s-button variant="primary" type="submit">
+                    Apply filters
+                  </s-button>
+                  {hasFilters ? (
+                    <s-button variant="tertiary" href="/app">
+                      Clear
+                    </s-button>
+                  ) : null}
+                </s-stack>
+              </s-stack>
+            </Form>
+          </div>
+        </details>
       </s-section>
 
       {/* Results */}
       <s-section
-        heading={`Activity log${total ? ` (${total})` : ""}`}
+        heading={`Activity logs`}
       >
         {/* Source tabs: separate people-made changes from apps/automation */}
         <s-stack direction="inline" gap="small-200">
@@ -403,15 +560,27 @@ export default function Dashboard() {
               <s-table-body>
                 {logs.map((log) => (
                   <s-table-row key={log.id}>
-                    <s-table-cell>{formatDate(log.occurredAt)}</s-table-cell>
-                    <s-table-cell>{resourceLabel(log.resource)}</s-table-cell>
+                    <s-table-cell>
+                      <div style={{ whiteSpace: "nowrap" }}>
+                        {formatDate(log.occurredAt)}
+                      </div>
+                    </s-table-cell>
+                    <s-table-cell>
+                      <div style={{ whiteSpace: "nowrap" }}>
+                        {resourceLabel(log.resource)}
+                      </div>
+                    </s-table-cell>
                     <s-table-cell>
                       <s-badge tone={toneForAction(log.action)}>
                         {actionLabel(log.action)}
                       </s-badge>
                     </s-table-cell>
                     <s-table-cell>
-                      {cleanSummary(log.summary || log.title || log.topic)}
+                      <s-box maxInlineSize="360px">
+                        <s-text>
+                          {cleanSummary(log.summary || log.title || log.topic)}
+                        </s-text>
+                      </s-box>
                     </s-table-cell>
                     <s-table-cell>
                       {log.actorName && log.actorEmail ? (
