@@ -15,14 +15,19 @@ export const action = async ({ request }) => {
   const { resource, action: eventAction } = parseTopic(topic);
   let { title, summary, resourceId, actor } = summarize(topic, payload);
 
+  // If the payload itself gave us a person (e.g. a customer's email/name),
+  // that's a user-sourced change.
+  let sourceType = actor.actorName || actor.actorEmail ? "user" : "system";
+
   // Best-effort "who did it" via the Admin events API. Only enrich when the
-  // payload didn't already give us a real actor (e.g. customer email) and we
-  // have an admin client + a resource GID. Deletes have no node to query.
+  // payload didn't already give us a real actor and we have an admin client +
+  // a resource GID. Deletes have no node to query.
   if (!actor.actorName && !actor.actorEmail && admin && eventAction !== "delete") {
     const gid = payload?.admin_graphql_api_id;
     const enriched = await enrichActor(admin, gid, resource);
     if (enriched.actorName) actor.actorName = enriched.actorName;
     if (enriched.actorEmail) actor.actorEmail = enriched.actorEmail;
+    sourceType = enriched.sourceType;
     // The event message is Shopify's own human description of the change and,
     // on Plus with read_users, often names the staff member — prefer it.
     if (enriched.eventMessage) summary = enriched.eventMessage;
@@ -33,6 +38,7 @@ export const action = async ({ request }) => {
   //  - themes/inventory don't expose events, so the source is unknown
   if (!actor.actorName && !actor.actorEmail) {
     actor.actorName = eventAction === "delete" ? "Deleted" : "Unknown";
+    sourceType = "system";
   }
 
   const occurredAt = triggeredAt ? new Date(triggeredAt) : new Date();
@@ -48,6 +54,7 @@ export const action = async ({ request }) => {
     actorName: actor.actorName,
     actorEmail: actor.actorEmail,
     actorId: actor.actorId,
+    sourceType,
     payload,
     webhookId,
     occurredAt,

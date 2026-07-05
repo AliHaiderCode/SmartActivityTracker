@@ -52,28 +52,40 @@ const ORDER_STAFF_QUERY = `#graphql
     }
   }`;
 
-// Turn an event node into an attribution label (app name / Admin user / System).
-function labelFromEvent(event) {
-  if (!event) return null;
-  if (event.attributeToApp && event.appTitle) return `${event.appTitle} (app)`;
-  if (event.attributeToApp) return "App";
-  if (event.attributeToUser) return "Admin user";
-  return "System";
+// Classify an event into { actorName, sourceType } from its attribute flags.
+//  sourceType: "user" (a staff member), "app" (an app/automation), "system".
+function classifyEvent(event) {
+  if (!event) return { actorName: null, sourceType: "system" };
+  if (event.attributeToApp) {
+    return {
+      actorName: event.appTitle ? `${event.appTitle} (app)` : "App",
+      sourceType: "app",
+    };
+  }
+  if (event.attributeToUser) {
+    return { actorName: "Admin user", sourceType: "user" };
+  }
+  return { actorName: "System", sourceType: "system" };
 }
 
 /**
- * Enrich a log with "who did it".
+ * Enrich a log with "who did it" and classify its source.
  *
  * Attribution sources (best → fallback), verified against Shopify docs:
  *  1. Order.staffMember → real staff name + email (needs read_users; Plus only).
- *  2. Event `message` → on Plus with read_users, often names the staff member.
- *  3. attributeToApp/appTitle → the app that made the change.
- *  4. attributeToUser → generic "Admin user" (name hidden without read_users).
+ *  2. attributeToApp/appTitle → the app/automation that made the change.
+ *  3. attributeToUser → a staff member ("Admin user"; name hidden without a
+ *     per-resource staffMember field — only orders expose one).
  *
- * Returns { actorName, actorEmail, eventMessage } — never throws (best-effort).
+ * Returns { actorName, actorEmail, sourceType, eventMessage } — never throws.
  */
 export async function enrichActor(admin, resourceGid, resource) {
-  const empty = { actorName: null, actorEmail: null, eventMessage: null };
+  const empty = {
+    actorName: null,
+    actorEmail: null,
+    sourceType: "system",
+    eventMessage: null,
+  };
   if (!admin || !resourceGid || !String(resourceGid).startsWith("gid://")) {
     return empty;
   }
@@ -89,36 +101,29 @@ export async function enrichActor(admin, resourceGid, resource) {
       const event = order?.events?.edges?.[0]?.node;
       const eventMessage = event?.message || null;
 
+      // A named staff member means a person did it.
       if (staff?.name || staff?.email) {
         return {
           actorName: staff.name || null,
           actorEmail: staff.email || null,
+          sourceType: "user",
           eventMessage,
         };
       }
-      return { actorName: labelFromEvent(event), actorEmail: null, eventMessage };
+      const classified = classifyEvent(event);
+      return { ...classified, actorEmail: null, eventMessage };
     }
 
     // Everything else: latest event on the resource.
     const response = await admin.graphql(LATEST_EVENT_QUERY, {
       variables: { id: resourceGid },
     });
-    const json = await response.json();
-    const event = json?.data?.node?.events?.edges?.[0]?.node;
-    // TEMP DEBUG — inspect what Shopify returns for the acting user.
-    console.log(
-      "[enrichActor]",
-      resource,
-      resourceGid,
-      "event:",
-      JSON.stringify(event),
-      "errors:",
-      JSON.stringify(json?.errors),
-    );
+    const event = (await response.json())?.data?.node?.events?.edges?.[0]?.node;
     if (!event) return empty;
 
+    const classified = classifyEvent(event);
     return {
-      actorName: labelFromEvent(event),
+      ...classified,
       actorEmail: null,
       eventMessage: event.message || null,
     };

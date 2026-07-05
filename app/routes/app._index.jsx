@@ -63,6 +63,8 @@ export const loader = async ({ request }) => {
   const actor = params.get("actor")?.trim() || "";
   const from = params.get("from") || "";
   const to = params.get("to") || "";
+  // Source tab: "" (all) | "user" (people) | "app" (apps & automation)
+  const source = params.get("source") || "";
   const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
 
   // Build the Prisma where clause from the active filters.
@@ -70,6 +72,9 @@ export const loader = async ({ request }) => {
 
   if (resource) where.resource = resource;
   if (action) where.action = action;
+  if (source === "user") where.sourceType = "user";
+  // "Apps & automation" groups app-triggered and system/unattributed events.
+  if (source === "app") where.sourceType = { in: ["app", "system"] };
 
   if (actor) {
     where.OR = [
@@ -104,24 +109,27 @@ export const loader = async ({ request }) => {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
 
-  const [logs, total, totalAll, todayCount, resourceGroups] = await Promise.all([
-    db.activityLog.findMany({
-      where,
-      orderBy: { occurredAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    db.activityLog.count({ where }),
-    db.activityLog.count({ where: { shop } }),
-    db.activityLog.count({ where: { shop, occurredAt: { gte: startOfToday } } }),
-    db.activityLog.groupBy({
-      by: ["resource"],
-      where: { shop },
-      _count: { resource: true },
-      orderBy: { _count: { resource: "desc" } },
-      take: 1,
-    }),
-  ]);
+  const [logs, total, totalAll, todayCount, resourceGroups, userCount, appCount] =
+    await Promise.all([
+      db.activityLog.findMany({
+        where,
+        orderBy: { occurredAt: "desc" },
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+      }),
+      db.activityLog.count({ where }),
+      db.activityLog.count({ where: { shop } }),
+      db.activityLog.count({ where: { shop, occurredAt: { gte: startOfToday } } }),
+      db.activityLog.groupBy({
+        by: ["resource"],
+        where: { shop },
+        _count: { resource: true },
+        orderBy: { _count: { resource: "desc" } },
+        take: 1,
+      }),
+      db.activityLog.count({ where: { shop, sourceType: "user" } }),
+      db.activityLog.count({ where: { shop, sourceType: { in: ["app", "system"] } } }),
+    ]);
 
   const topResource = resourceGroups[0]?.resource
     ? resourceLabel(resourceGroups[0].resource)
@@ -151,12 +159,14 @@ export const loader = async ({ request }) => {
       summary: l.summary,
       actorName: l.actorName,
       actorEmail: l.actorEmail,
+      sourceType: l.sourceType,
       occurredAt: l.occurredAt.toISOString(),
     })),
     total,
     page,
     pageSize: PAGE_SIZE,
-    filters: { q, resource, action, actor, from, to },
+    filters: { q, resource, action, actor, from, to, source },
+    counts: { all: totalAll, user: userCount, app: appCount },
     stats: {
       totalAll,
       todayCount,
@@ -194,10 +204,18 @@ function StatTile({ label, value }) {
 }
 
 export default function Dashboard() {
-  const { logs, total, page, pageSize, filters, stats } = useLoaderData();
+  const { logs, total, page, pageSize, filters, stats, counts } =
+    useLoaderData();
   const navigation = useNavigation();
   const submit = useSubmit();
   const isLoading = navigation.state === "loading";
+
+  // Source tabs: All / People / Apps & automation.
+  const SOURCE_TABS = [
+    { key: "", label: "All", count: counts.all },
+    { key: "user", label: "People", count: counts.user },
+    { key: "app", label: "Apps & automation", count: counts.app },
+  ];
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasFilters =
@@ -211,17 +229,27 @@ export default function Dashboard() {
   // Submit the filter form as the user changes selects/dates (GET → URL params).
   const autoSubmit = (event) => submit(event.currentTarget.form, { method: "get" });
 
-  const goToPage = (nextPage) => {
+  // Build URL params from current filters, with optional overrides.
+  const buildParams = (overrides = {}) => {
+    const merged = { ...filters, ...overrides };
     const p = new URLSearchParams();
-    if (filters.q) p.set("q", filters.q);
-    if (filters.resource) p.set("resource", filters.resource);
-    if (filters.action) p.set("action", filters.action);
-    if (filters.actor) p.set("actor", filters.actor);
-    if (filters.from) p.set("from", filters.from);
-    if (filters.to) p.set("to", filters.to);
-    p.set("page", String(nextPage));
-    submit(p, { method: "get" });
+    if (merged.q) p.set("q", merged.q);
+    if (merged.resource) p.set("resource", merged.resource);
+    if (merged.action) p.set("action", merged.action);
+    if (merged.actor) p.set("actor", merged.actor);
+    if (merged.from) p.set("from", merged.from);
+    if (merged.to) p.set("to", merged.to);
+    if (merged.source) p.set("source", merged.source);
+    if (merged.page) p.set("page", String(merged.page));
+    return p;
   };
+
+  const goToPage = (nextPage) =>
+    submit(buildParams({ page: nextPage }), { method: "get" });
+
+  // Switch source tab (resets to page 1, keeps other filters).
+  const switchSource = (nextSource) =>
+    submit(buildParams({ source: nextSource, page: 1 }), { method: "get" });
 
   return (
     <s-page heading="Activity dashboard">
@@ -241,8 +269,9 @@ export default function Dashboard() {
       {/* Filters */}
       <s-section heading="Search & filter">
         <Form method="get">
-          {/* reset page whenever filters change */}
+          {/* reset page whenever filters change; keep the active source tab */}
           <input type="hidden" name="page" value="1" />
+          <input type="hidden" name="source" value={filters.source} />
           <s-stack direction="block" gap="base">
             <s-search-field
               label="Search"
@@ -320,6 +349,20 @@ export default function Dashboard() {
       <s-section
         heading={`Activity log${total ? ` (${total})` : ""}`}
       >
+        {/* Source tabs: separate people-made changes from apps/automation */}
+        <s-stack direction="inline" gap="small-200">
+          {SOURCE_TABS.map((tab) => (
+            <s-button
+              key={tab.key || "all"}
+              variant={filters.source === tab.key ? "primary" : "tertiary"}
+              onClick={() => switchSource(tab.key)}
+            >
+              {`${tab.label} (${tab.count})`}
+            </s-button>
+          ))}
+        </s-stack>
+        <s-box paddingBlockStart="base"></s-box>
+
         {isLoading ? (
           <s-stack direction="inline" gap="base" alignItems="center">
             <s-spinner size="base" accessibilityLabel="Loading"></s-spinner>
