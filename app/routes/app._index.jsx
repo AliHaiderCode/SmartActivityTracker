@@ -3,7 +3,7 @@ import { Form, useLoaderData, useNavigation, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { actionLabel, resourceLabel } from "../utils/activity";
+import { actionLabel, resourceLabel, stripHtml } from "../utils/activity";
 
 const PAGE_SIZE = 25;
 
@@ -185,6 +185,12 @@ function formatDate(iso) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// Clean an event summary for the table: strip HTML and cap length.
+function cleanSummary(text, max = 90) {
+  const clean = stripHtml(text) || "";
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
 }
 
 function StatTile({ label, value }) {
@@ -405,7 +411,7 @@ export default function Dashboard() {
                       </s-badge>
                     </s-table-cell>
                     <s-table-cell>
-                      {log.summary || log.title || log.topic}
+                      {cleanSummary(log.summary || log.title || log.topic)}
                     </s-table-cell>
                     <s-table-cell>
                       {log.actorName && log.actorEmail ? (

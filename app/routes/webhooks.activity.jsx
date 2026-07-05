@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { parseTopic } from "../utils/activity";
+import { parseTopic, stripHtml } from "../utils/activity";
 import { summarize, enrichActor } from "../utils/activity.server";
 
 /**
@@ -30,7 +30,8 @@ export const action = async ({ request }) => {
     sourceType = enriched.sourceType;
     // The event message is Shopify's own human description of the change and,
     // on Plus with read_users, often names the staff member — prefer it.
-    if (enriched.eventMessage) summary = enriched.eventMessage;
+    // It's HTML, so strip tags for a clean plain-text summary.
+    if (enriched.eventMessage) summary = stripHtml(enriched.eventMessage);
   }
 
   // Meaningful fallback so the "User / source" column is never blank:

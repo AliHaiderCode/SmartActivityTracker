@@ -51,3 +51,19 @@ export function actionLabel(action) {
   const cleaned = String(action || "").replace(/_/g, " ");
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
+
+// Shopify event messages are HTML (e.g. contain <a> links). Strip tags and
+// decode the few common entities so summaries render as clean plain text.
+export function stripHtml(html) {
+  if (!html) return html;
+  return String(html)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
