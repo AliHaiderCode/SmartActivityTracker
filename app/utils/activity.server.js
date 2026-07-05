@@ -96,7 +96,17 @@ export async function enrichActor(admin, resourceGid, resource) {
       const res = await admin.graphql(ORDER_STAFF_QUERY, {
         variables: { id: resourceGid },
       });
-      const order = (await res.json())?.data?.order;
+      const orderJson = await res.json();
+      // TEMP DEBUG — inspect staffMember resolution for orders.
+      console.log(
+        "[enrichActor:order]",
+        resourceGid,
+        "data:",
+        JSON.stringify(orderJson?.data?.order),
+        "errors:",
+        JSON.stringify(orderJson?.errors),
+      );
+      const order = orderJson?.data?.order;
       const staff = order?.staffMember;
       const event = order?.events?.edges?.[0]?.node;
       const eventMessage = event?.message || null;
