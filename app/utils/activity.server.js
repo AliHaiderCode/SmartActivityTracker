@@ -103,7 +103,18 @@ export async function enrichActor(admin, resourceGid, resource) {
     const response = await admin.graphql(LATEST_EVENT_QUERY, {
       variables: { id: resourceGid },
     });
-    const event = (await response.json())?.data?.node?.events?.edges?.[0]?.node;
+    const json = await response.json();
+    const event = json?.data?.node?.events?.edges?.[0]?.node;
+    // TEMP DEBUG — inspect what Shopify returns for the acting user.
+    console.log(
+      "[enrichActor]",
+      resource,
+      resourceGid,
+      "event:",
+      JSON.stringify(event),
+      "errors:",
+      JSON.stringify(json?.errors),
+    );
     if (!event) return empty;
 
     return {
