@@ -20,8 +20,9 @@ export const action = async ({ request }) => {
   // have an admin client + a resource GID. Deletes have no node to query.
   if (!actor.actorName && !actor.actorEmail && admin && eventAction !== "delete") {
     const gid = payload?.admin_graphql_api_id;
-    const enriched = await enrichActor(admin, gid);
+    const enriched = await enrichActor(admin, gid, resource);
     if (enriched.actorName) actor.actorName = enriched.actorName;
+    if (enriched.actorEmail) actor.actorEmail = enriched.actorEmail;
     // The event message is Shopify's own human description of the change and,
     // on Plus with read_users, often names the staff member — prefer it.
     if (enriched.eventMessage) summary = enriched.eventMessage;

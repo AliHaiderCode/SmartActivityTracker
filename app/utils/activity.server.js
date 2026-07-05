@@ -10,6 +10,8 @@
 
 import { parseTopic, resourceLabel, actionLabel } from "./activity";
 
+// Generic: latest event on any HasEvents resource (products, collections,
+// discounts, customers, etc.). The event `message` names the staff on Plus.
 const LATEST_EVENT_QUERY = `#graphql
   query ActivityLatestEvent($id: ID!) {
     node(id: $id) {
@@ -17,9 +19,7 @@ const LATEST_EVENT_QUERY = `#graphql
         events(first: 1, reverse: true, sortKey: CREATED_AT) {
           edges {
             node {
-              action
               message
-              createdAt
               attributeToUser
               attributeToApp
               appTitle
@@ -30,49 +30,90 @@ const LATEST_EVENT_QUERY = `#graphql
     }
   }`;
 
+// Order-specific: with read_users, Order.staffMember gives the exact staff
+// member who created the order — the strongest attribution we can get.
+const ORDER_STAFF_QUERY = `#graphql
+  query ActivityOrderStaff($id: ID!) {
+    order(id: $id) {
+      staffMember {
+        name
+        email
+      }
+      events(first: 1, reverse: true, sortKey: CREATED_AT) {
+        edges {
+          node {
+            message
+            attributeToUser
+            attributeToApp
+            appTitle
+          }
+        }
+      }
+    }
+  }`;
+
+// Turn an event node into an attribution label (app name / Admin user / System).
+function labelFromEvent(event) {
+  if (!event) return null;
+  if (event.attributeToApp && event.appTitle) return `${event.appTitle} (app)`;
+  if (event.attributeToApp) return "App";
+  if (event.attributeToUser) return "Admin user";
+  return "System";
+}
+
 /**
- * Enrich a log with "who did it" using the Admin `events` API.
+ * Enrich a log with "who did it".
  *
- * Attribution reality (verified against Shopify docs):
- *  - `attributeToApp` + `appTitle` → an app made the change (we show the app name).
- *  - `attributeToUser` → a human/staff member did it. Shopify only reveals the
- *    staff member's NAME/EMAIL to apps holding the `read_users` scope, which is
- *    gated to Shopify Plus / Advanced stores (enabled via Shopify Support at
- *    review time). Where that's granted, the event `message` typically names the
- *    staff member (e.g. "Bob Bobsen updated the title") — so we surface `message`
- *    and fall back to a generic "Admin user" label otherwise.
- *  - Non-Plus stores: staff name/email is simply not available from Shopify.
+ * Attribution sources (best → fallback), verified against Shopify docs:
+ *  1. Order.staffMember → real staff name + email (needs read_users; Plus only).
+ *  2. Event `message` → on Plus with read_users, often names the staff member.
+ *  3. attributeToApp/appTitle → the app that made the change.
+ *  4. attributeToUser → generic "Admin user" (name hidden without read_users).
  *
- * Returns { actorName, eventMessage } — never throws (best-effort).
+ * Returns { actorName, actorEmail, eventMessage } — never throws (best-effort).
  */
-export async function enrichActor(admin, resourceGid) {
+export async function enrichActor(admin, resourceGid, resource) {
+  const empty = { actorName: null, actorEmail: null, eventMessage: null };
   if (!admin || !resourceGid || !String(resourceGid).startsWith("gid://")) {
-    return { actorName: null, eventMessage: null };
+    return empty;
   }
 
   try {
+    // Orders: prefer the exact staff member.
+    if (resource === "orders") {
+      const res = await admin.graphql(ORDER_STAFF_QUERY, {
+        variables: { id: resourceGid },
+      });
+      const order = (await res.json())?.data?.order;
+      const staff = order?.staffMember;
+      const event = order?.events?.edges?.[0]?.node;
+      const eventMessage = event?.message || null;
+
+      if (staff?.name || staff?.email) {
+        return {
+          actorName: staff.name || null,
+          actorEmail: staff.email || null,
+          eventMessage,
+        };
+      }
+      return { actorName: labelFromEvent(event), actorEmail: null, eventMessage };
+    }
+
+    // Everything else: latest event on the resource.
     const response = await admin.graphql(LATEST_EVENT_QUERY, {
       variables: { id: resourceGid },
     });
-    const json = await response.json();
-    const event = json?.data?.node?.events?.edges?.[0]?.node;
-    if (!event) return { actorName: null, eventMessage: null };
+    const event = (await response.json())?.data?.node?.events?.edges?.[0]?.node;
+    if (!event) return empty;
 
-    const eventMessage = event.message || null;
-
-    if (event.attributeToApp && event.appTitle) {
-      return { actorName: `${event.appTitle} (app)`, eventMessage };
-    }
-    if (event.attributeToApp) {
-      return { actorName: "App", eventMessage };
-    }
-    if (event.attributeToUser) {
-      return { actorName: "Admin user", eventMessage };
-    }
-    return { actorName: "System", eventMessage };
+    return {
+      actorName: labelFromEvent(event),
+      actorEmail: null,
+      eventMessage: event.message || null,
+    };
   } catch (error) {
     console.error("enrichActor failed", error);
-    return { actorName: null, eventMessage: null };
+    return empty;
   }
 }
 
