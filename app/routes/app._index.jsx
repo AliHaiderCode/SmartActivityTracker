@@ -365,7 +365,14 @@ export default function Dashboard() {
                       {log.summary || log.title || log.topic}
                     </s-table-cell>
                     <s-table-cell>
-                      {log.actorName || log.actorEmail || "—"}
+                      {log.actorName && log.actorEmail ? (
+                        <s-stack direction="block" gap="small-500">
+                          <s-text>{log.actorName}</s-text>
+                          <s-text color="subdued">{log.actorEmail}</s-text>
+                        </s-stack>
+                      ) : (
+                        log.actorName || log.actorEmail || "—"
+                      )}
                     </s-table-cell>
                     <s-table-cell>
                       <s-link href={`/app/logs/${log.id}`}>View</s-link>
