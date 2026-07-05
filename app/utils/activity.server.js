@@ -33,16 +33,21 @@ const LATEST_EVENT_QUERY = `#graphql
 /**
  * Enrich a log with "who did it" using the Admin `events` API.
  *
- * Shopify does NOT expose the acting staff member's name/email for regular
- * changes (only Plus audit logs do). What we CAN reliably get per resource is:
- *  - attributeToUser  → an admin/staff user did it (name unavailable)
- *  - attributeToApp   → an app did it, plus the app's title
- * We turn that into a human attribution label like "Admin user", the app name,
- * or "System". Returns { actorName } (never throws — enrichment is best-effort).
+ * Attribution reality (verified against Shopify docs):
+ *  - `attributeToApp` + `appTitle` → an app made the change (we show the app name).
+ *  - `attributeToUser` → a human/staff member did it. Shopify only reveals the
+ *    staff member's NAME/EMAIL to apps holding the `read_users` scope, which is
+ *    gated to Shopify Plus / Advanced stores (enabled via Shopify Support at
+ *    review time). Where that's granted, the event `message` typically names the
+ *    staff member (e.g. "Bob Bobsen updated the title") — so we surface `message`
+ *    and fall back to a generic "Admin user" label otherwise.
+ *  - Non-Plus stores: staff name/email is simply not available from Shopify.
+ *
+ * Returns { actorName, eventMessage } — never throws (best-effort).
  */
 export async function enrichActor(admin, resourceGid) {
   if (!admin || !resourceGid || !String(resourceGid).startsWith("gid://")) {
-    return { actorName: null };
+    return { actorName: null, eventMessage: null };
   }
 
   try {
@@ -51,30 +56,23 @@ export async function enrichActor(admin, resourceGid) {
     });
     const json = await response.json();
     const event = json?.data?.node?.events?.edges?.[0]?.node;
-    // TEMP DEBUG — remove once attribution is confirmed working.
-    console.log(
-      "[enrichActor]",
-      resourceGid,
-      "event:",
-      JSON.stringify(event),
-      "errors:",
-      JSON.stringify(json?.errors),
-    );
-    if (!event) return { actorName: null };
+    if (!event) return { actorName: null, eventMessage: null };
+
+    const eventMessage = event.message || null;
 
     if (event.attributeToApp && event.appTitle) {
-      return { actorName: `${event.appTitle} (app)` };
+      return { actorName: `${event.appTitle} (app)`, eventMessage };
     }
     if (event.attributeToApp) {
-      return { actorName: "App" };
+      return { actorName: "App", eventMessage };
     }
     if (event.attributeToUser) {
-      return { actorName: "Admin user" };
+      return { actorName: "Admin user", eventMessage };
     }
-    return { actorName: "System" };
+    return { actorName: "System", eventMessage };
   } catch (error) {
     console.error("enrichActor failed", error);
-    return { actorName: null };
+    return { actorName: null, eventMessage: null };
   }
 }
 

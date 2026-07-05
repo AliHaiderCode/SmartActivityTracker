@@ -13,17 +13,7 @@ export const action = async ({ request }) => {
     await authenticate.webhook(request);
 
   const { resource, action: eventAction } = parseTopic(topic);
-  const { title, summary, resourceId, actor } = summarize(topic, payload);
-
-  // TEMP DEBUG — remove once attribution is confirmed working.
-  console.log(
-    "[webhook]",
-    topic,
-    "hasAdmin:",
-    Boolean(admin),
-    "gid:",
-    payload?.admin_graphql_api_id,
-  );
+  let { title, summary, resourceId, actor } = summarize(topic, payload);
 
   // Best-effort "who did it" via the Admin events API. Only enrich when the
   // payload didn't already give us a real actor (e.g. customer email) and we
@@ -32,6 +22,16 @@ export const action = async ({ request }) => {
     const gid = payload?.admin_graphql_api_id;
     const enriched = await enrichActor(admin, gid);
     if (enriched.actorName) actor.actorName = enriched.actorName;
+    // The event message is Shopify's own human description of the change and,
+    // on Plus with read_users, often names the staff member — prefer it.
+    if (enriched.eventMessage) summary = enriched.eventMessage;
+  }
+
+  // Meaningful fallback so the "User / source" column is never blank:
+  //  - deletes can't be queried (the resource is gone)
+  //  - themes/inventory don't expose events, so the source is unknown
+  if (!actor.actorName && !actor.actorEmail) {
+    actor.actorName = eventAction === "delete" ? "Deleted" : "Unknown";
   }
 
   const occurredAt = triggeredAt ? new Date(triggeredAt) : new Date();

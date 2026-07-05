@@ -10,6 +10,12 @@ embedded = true
 # NOTE: read_customers / read_orders are commented out until "Protected customer
 # data access" is approved in the Partner Dashboard. Re-add them together with the
 # customer/order webhook topics below once approved.
+#
+# STAFF ATTRIBUTION (Plus): to show the staff member's name/email who made a
+# change, add `read_users` to the scopes below. `read_users` is only grantable on
+# Shopify Plus / Advanced stores and must be enabled for the app by Shopify
+# Support at review time. Do NOT add it while testing on a non-Plus store — the
+# install/OAuth will fail. The app already falls back to "Admin user" without it.
 scopes = "read_products,read_inventory,read_fulfillments,read_draft_orders,read_discounts,read_price_rules,read_marketing_events,read_themes,read_locations"
 
 [webhooks]

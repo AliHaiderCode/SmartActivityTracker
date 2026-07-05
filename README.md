@@ -12,9 +12,20 @@ Built on the [Shopify React Router app template](https://github.com/Shopify/shop
 - **Idempotent logging** — events are deduped by the Shopify webhook id, so retries never create duplicates.
 - **Full history** — every event is stored with its complete payload; nothing is auto-deleted.
 
-### A note on "which user made the change"
+### Attribution — "who made the change"
 
-Standard Shopify webhooks **do not reliably include which staff member** performed an action — that data is only fully available through the shop's `audit_events` (a Shopify **Plus**-only feature). Smart Activity Tracker extracts actor info opportunistically when the payload provides it (e.g. an order's `user_id`, or a customer's email/name), and otherwise records the affected object without an actor. Search-by-user works on whatever actor data is captured.
+Each event is enriched with a **User / source** using the Admin `events` API:
+
+| What we can show | When |
+| --- | --- |
+| **App name** (e.g. "My App (app)") | Any store — when an app made the change |
+| **"Admin user"** | Any store — when a human/staff member made it (name/email hidden by Shopify) |
+| **Staff member name/email** | **Shopify Plus / Advanced only**, with the `read_users` scope |
+| **"Deleted" / "Unknown"** | Deletes (resource gone) and resources without events (themes, inventory) |
+
+**Important:** Shopify does **not** expose the acting staff member's name or email to standard apps — only to apps holding the `read_users` scope, which is grantable only on **Shopify Plus / Advanced** stores and must be enabled by Shopify Support during app review. On those stores the event `message` typically names the staff member, so full attribution appears automatically. Everywhere else the app falls back to "Admin user".
+
+To enable full staff attribution for a Plus launch, add `read_users` to `[access_scopes]` in `shopify.app.toml` (see the note there) once Shopify Support has enabled it for your app.
 
 ## Deploying to Railway
 
