@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { parseTopic, stripHtml } from "../utils/activity";
+import { parseTopic, stripHtml, staffNameFromMessage } from "../utils/activity";
 import { summarize, enrichActor } from "../utils/activity.server";
 
 /**
@@ -15,31 +15,44 @@ export const action = async ({ request }) => {
   const { resource, action: eventAction } = parseTopic(topic);
   let { title, summary, resourceId, actor } = summarize(topic, payload);
 
-  // If the payload itself gave us a person (e.g. a customer's email/name),
-  // that's a user-sourced change.
+  // Attribution is split into two independent things:
+  //   actorName/actorEmail → the PERSON who did it (null if not a person)
+  //   sourceLabel          → where it came from (app / "System")
   let sourceType = actor.actorName || actor.actorEmail ? "user" : "system";
+  let sourceLabel = null;
 
-  // Best-effort "who did it" via the Admin events API. Only enrich when the
-  // payload didn't already give us a real actor and we have an admin client +
-  // a resource GID. Deletes have no node to query.
-  if (!actor.actorName && !actor.actorEmail && admin && eventAction !== "delete") {
+  // Best-effort enrichment via the Admin events API. Deletes have no node.
+  if (admin && eventAction !== "delete") {
     const gid = payload?.admin_graphql_api_id;
     const enriched = await enrichActor(admin, gid, resource);
-    if (enriched.actorName) actor.actorName = enriched.actorName;
-    if (enriched.actorEmail) actor.actorEmail = enriched.actorEmail;
+    // Only take the person from enrichment if the payload didn't already have one.
+    if (!actor.actorName && !actor.actorEmail) {
+      if (enriched.actorName) actor.actorName = enriched.actorName;
+      if (enriched.actorEmail) actor.actorEmail = enriched.actorEmail;
+    }
     sourceType = enriched.sourceType;
-    // The event message is Shopify's own human description of the change and,
-    // on Plus with read_users, often names the staff member — prefer it.
-    // It's HTML, so strip tags for a clean plain-text summary.
+    if (enriched.sourceLabel) sourceLabel = enriched.sourceLabel;
+    // The event message often names the staff member and describes the change
+    // precisely — prefer it (it's HTML, so strip tags).
     if (enriched.eventMessage) summary = stripHtml(enriched.eventMessage);
   }
 
-  // Meaningful fallback so the "User / source" column is never blank:
-  //  - deletes can't be queried (the resource is gone)
-  //  - themes/inventory don't expose events, so the source is unknown
+  // "Admin user" isn't a real person name — treat it as no user, source only.
+  if (actor.actorName === "Admin user") {
+    actor.actorName = null;
+    sourceLabel = sourceLabel || "Shopify admin";
+  }
+
+  // Guarantee: if the final summary names a staff member (e.g. "Ali Haider
+  // created…"), that person IS the user — surface them even if enrichment
+  // didn't. This is the strongest signal the merchant sees.
   if (!actor.actorName && !actor.actorEmail) {
-    actor.actorName = eventAction === "delete" ? "Deleted" : "Unknown";
-    sourceType = "system";
+    const named = staffNameFromMessage(summary);
+    if (named) {
+      actor.actorName = named;
+      sourceType = "user";
+      if (!sourceLabel) sourceLabel = "Shopify admin";
+    }
   }
 
   const occurredAt = triggeredAt ? new Date(triggeredAt) : new Date();
@@ -52,10 +65,11 @@ export const action = async ({ request }) => {
     resourceId,
     title,
     summary,
-    actorName: actor.actorName,
-    actorEmail: actor.actorEmail,
+    actorName: actor.actorName || null,
+    actorEmail: actor.actorEmail || null,
     actorId: actor.actorId,
     sourceType,
+    sourceLabel,
     payload,
     webhookId,
     occurredAt,

@@ -29,6 +29,7 @@ export const loader = async ({ request, params }) => {
       actorName: log.actorName,
       actorEmail: log.actorEmail,
       actorId: log.actorId,
+      sourceLabel: log.sourceLabel,
       webhookId: log.webhookId,
       occurredAt: log.occurredAt.toISOString(),
       createdAt: log.createdAt.toISOString(),
@@ -53,9 +54,9 @@ export default function LogDetail() {
 
   return (
     <s-page heading={log.title || log.topic}>
-      <s-button slot="primary-action" variant="secondary" href="/app">
-        Back to dashboard
-      </s-button>
+      <s-link slot="breadcrumb-actions" href="/app">
+        Dashboard
+      </s-link>
 
       <s-section heading="Event details">
         <s-stack direction="block" gap="base">
@@ -64,11 +65,9 @@ export default function LogDetail() {
           <Row label="Action" value={actionLabel(log.action)} />
           <Row label="Topic" value={log.topic} />
           <Row label="Resource ID" value={log.resourceId} />
-          <Row
-            label="User"
-            value={log.actorName || log.actorEmail || "Not recorded"}
-          />
-          <Row label="User email" value={log.actorEmail} />
+          <Row label="User" value={log.actorName || log.actorEmail || "—"} />
+          <Row label="User email" value={log.actorEmail || "—"} />
+          <Row label="Source" value={log.sourceLabel || "—"} />
           <Row
             label="Occurred at"
             value={new Date(log.occurredAt).toLocaleString()}

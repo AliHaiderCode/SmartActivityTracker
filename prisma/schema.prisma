@@ -44,6 +44,7 @@ model ActivityLog {
   actorEmail String? // staff member email (when available)
   actorId    String?
   sourceType String  @default("system") // "user" | "app" | "system"
+  sourceLabel String? // where it came from: app name / "System" / "Shopify admin"
   summary    String? // short human-readable description
   payload    Json // full webhook payload for detail view
   webhookId  String?  @unique // X-Shopify-Webhook-Id → idempotency

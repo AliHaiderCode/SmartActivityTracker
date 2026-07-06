@@ -102,7 +102,7 @@ export function actionLabel(action) {
 // staff member's name is embedded at the start of the event message, e.g.
 // "Ali Haider created this draft order." Extract that leading name.
 const STAFF_MESSAGE_RE =
-  /^([A-Z][\p{L}.'-]+(?:\s+[A-Z][\p{L}.'-]+){0,3})\s+(?:created|updated|changed|added|removed|deleted|edited|marked|fulfilled|refunded|cancelled|canceled|captured|archived|unarchived|imported|adjusted|set|placed|paid)\b/u;
+  /^([A-Z][\p{L}.'-]+(?:\s+[A-Z][\p{L}.'-]+){0,3})\s+(?:created|updated|changed|added|removed|deleted|edited|marked|fulfilled|refunded|cancelled|canceled|captured|archived|unarchived|imported|adjusted|set|placed|paid|published|unpublished|closed|opened|reopened|sent|approved|rejected|duplicated|enabled|disabled|activated|deactivated|renamed|moved|assigned|scheduled|restocked|voided|completed|started|connected|disconnected)\b/u;
 
 // Names that are really apps/automation, not people.
 const APP_LIKE = /^(shopify|online store|point of sale|pos|draft orders?)$/i;

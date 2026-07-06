@@ -57,28 +57,36 @@ const ORDER_STAFF_QUERY = `#graphql
     }
   }`;
 
-// Classify an event into { actorName, sourceType }.
-//  sourceType: "user" (a staff member), "app" (an app/automation), "system".
+// Classify an event into { actorName, sourceLabel, sourceType }.
+//  actorName  : the staff PERSON who did it (null if not a person)
+//  sourceLabel: where it came from — app name or "System" (null if unknown)
+//  sourceType : "user" | "app" | "system" (used for the People/Apps tabs)
 function classifyEvent(event) {
-  if (!event) return { actorName: null, sourceType: "system" };
+  if (!event) return { actorName: null, sourceLabel: null, sourceType: "system" };
 
-  // If the message names a person, that person did it — strongest signal,
-  // even when Shopify attributes the action to the "Shopify Web" app.
+  // A person named in the message did it — strongest signal. Source is still
+  // whatever Shopify attributes it to (usually the "Shopify Web" admin).
   const named = staffNameFromMessage(event.message);
   if (named) {
-    return { actorName: named, sourceType: "user" };
+    return {
+      actorName: named,
+      sourceLabel: event.appTitle || "Shopify admin",
+      sourceType: "user",
+    };
   }
 
   if (event.attributeToApp) {
     return {
-      actorName: event.appTitle ? `${event.appTitle} (app)` : "App",
+      actorName: null,
+      sourceLabel: event.appTitle || "App",
       sourceType: "app",
     };
   }
   if (event.attributeToUser) {
-    return { actorName: "Admin user", sourceType: "user" };
+    // A staff member did it but Shopify won't name them here.
+    return { actorName: "Admin user", sourceLabel: "Shopify admin", sourceType: "user" };
   }
-  return { actorName: "System", sourceType: "system" };
+  return { actorName: null, sourceLabel: "System", sourceType: "system" };
 }
 
 /**
@@ -90,12 +98,13 @@ function classifyEvent(event) {
  *  3. attributeToUser → a staff member ("Admin user"; name hidden without a
  *     per-resource staffMember field — only orders expose one).
  *
- * Returns { actorName, actorEmail, sourceType, eventMessage } — never throws.
+ * Returns { actorName, actorEmail, sourceLabel, sourceType, eventMessage }.
  */
 export async function enrichActor(admin, resourceGid, resource) {
   const empty = {
     actorName: null,
     actorEmail: null,
+    sourceLabel: null,
     sourceType: "system",
     eventMessage: null,
   };
@@ -119,6 +128,7 @@ export async function enrichActor(admin, resourceGid, resource) {
         return {
           actorName: staff.name || null,
           actorEmail: staff.email || null,
+          sourceLabel: event?.appTitle || "Shopify admin",
           sourceType: "user",
           eventMessage,
         };
