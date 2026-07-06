@@ -47,6 +47,8 @@ On the Railway service, set:
 | `SHOPIFY_APP_URL` | The app's public Railway URL, e.g. `https://your-app.up.railway.app`. |
 | `SCOPES` | Comma-separated scopes — must match `shopify.app.toml`: `read_products,read_orders,read_customers,read_inventory,read_fulfillments,read_draft_orders,read_discounts,read_price_rules,read_marketing_events,read_themes,read_locations` |
 | `NODE_ENV` | `production` |
+| `RESEND_API_KEY` | API key from [resend.com](https://resend.com) — powers the in-app Support contact form. Support messages are emailed to `haideraliminhas77@gmail.com`. |
+| `SUPPORT_FROM` | *(optional)* Verified Resend "from" address, e.g. `Support <support@yourdomain.com>`. Defaults to Resend's shared `onboarding@resend.dev` sender for testing. |
 
 ### 3. Deploy
 

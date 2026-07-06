@@ -1,11 +1,6 @@
 /* eslint-disable react/prop-types */
 import { useEffect, useState } from "react";
-import {
-  useLoaderData,
-  useNavigate,
-  useNavigation,
-  useSubmit,
-} from "react-router";
+import { useLoaderData, useNavigate, useSubmit } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
@@ -593,9 +588,7 @@ function StatTile({ label, value, icon, accent = "blue", trend }) {
 export default function Dashboard() {
   const { logs, total, page, pageSize, filters, stats } = useLoaderData();
   const navigate = useNavigate();
-  const navigation = useNavigation();
   const submit = useSubmit();
-  const isLoading = navigation.state === "loading";
 
   // Today (YYYY-MM-DD) — used to block future dates in the date filters.
   const today = new Date().toISOString().slice(0, 10);
@@ -865,12 +858,7 @@ export default function Dashboard() {
 
       {/* Results */}
       <s-section heading={`Activity logs`}>
-        {isLoading ? (
-          <s-stack direction="inline" gap="base" alignItems="center">
-            <s-spinner size="base" accessibilityLabel="Loading"></s-spinner>
-            <s-text color="subdued">Loading…</s-text>
-          </s-stack>
-        ) : logs.length === 0 ? (
+        {logs.length === 0 ? (
           <s-box
             padding="large"
             borderRadius="base"
